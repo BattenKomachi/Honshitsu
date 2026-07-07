@@ -19,9 +19,9 @@ from dotenv import load_dotenv
 
 from factcheck import fetch_article
 
-if sys.stdout.encoding != "utf-8":
+if sys.stdout is not None and sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
-if sys.stdin.encoding != "utf-8":
+if sys.stdin is not None and sys.stdin.encoding != "utf-8":
     sys.stdin.reconfigure(encoding="utf-8")
 
 SCRIPT_DIR = Path(__file__).resolve().parent

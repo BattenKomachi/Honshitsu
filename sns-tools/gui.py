@@ -4,12 +4,32 @@
 シンプルなデスクトップアプリ。tkinter(Python標準ライブラリ)のみを使用。
 """
 
+import sys
 import threading
-import tkinter as tk
-from tkinter import ttk, scrolledtext
+import traceback
+from datetime import datetime
+from pathlib import Path
 
-import factcheck
-import trend_watch
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+
+
+def _log_startup_error(exc: BaseException) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOG_DIR / "gui_error.log"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(f"\n[{datetime.now().isoformat()}]\n")
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=f)
+
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, scrolledtext
+
+    import factcheck
+    import trend_watch
+except Exception as e:
+    _log_startup_error(e)
+    sys.exit(1)
 
 
 class App(tk.Tk):
@@ -223,4 +243,8 @@ class TrendWatchTab(ttk.Frame):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    try:
+        App().mainloop()
+    except Exception as e:
+        _log_startup_error(e)
+        sys.exit(1)
