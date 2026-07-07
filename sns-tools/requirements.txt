@@ -1,0 +1,4 @@
+anthropic
+requests
+trafilatura
+python-dotenv

@@ -1,0 +1,5 @@
+.env
+sns-tools/outputs/
+sns-tools/venv/
+__pycache__/
+_trash/
