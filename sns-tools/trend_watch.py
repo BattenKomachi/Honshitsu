@@ -17,7 +17,7 @@ from pathlib import Path
 import anthropic
 from dotenv import load_dotenv
 
-from factcheck import fetch_article
+from factcheck import apply_hakata_dict, fetch_article
 
 if sys.stdout is not None and sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -31,27 +31,33 @@ load_dotenv(SCRIPT_DIR / ".env")
 
 CATEGORY_LIST = ["政治", "経済", "芸能", "スポーツ", "音楽"]
 
-SEARCH_SYSTEM_PROMPT = """あなたはSNSトレンド調査の専門家です。指定されたカテゴリについて、
+DEFAULT_SUMMARY_LENGTH = 30
+
+
+def _build_search_system_prompt(summary_length: int) -> str:
+    return f"""あなたはSNSトレンド調査の専門家です。指定されたカテゴリについて、
 今ネット上で話題になっている出来事を、Web検索ツールを使って調べてください。
 
 出力ルール:
 - そのカテゴリで話題になっている出来事を3件、新しい順に挙げること
-- 各項目は「一言要約(30文字以内)」と「出典URL」をセットにすること
+- 各項目は「一言要約({summary_length}文字以内)」と「出典URL」をセットにすること
 - 出典URLは必ず個別記事の実際のURLにすること。検索結果一覧ページや検索クエリを含むURL(例: "search?p=...")、カテゴリ一覧ページ(例: "/categories/...")は絶対に使わないこと
 - 出力は必ず次のJSON形式のみで返すこと。他の文章は一切含めないこと。
 
-{"topics": [{"summary": "一言要約", "url": "出典URL"}, ...]}
+{{"topics": [{{"summary": "一言要約", "url": "出典URL"}}, ...]}}
 """
 
-CLASSIFY_SYSTEM_PROMPT = """あなたはSNS投稿の分類の専門家です。渡された投稿(URLの記事本文、またはテキスト)を読み、
+
+def _build_classify_system_prompt(summary_length: int) -> str:
+    return f"""あなたはSNS投稿の分類の専門家です。渡された投稿(URLの記事本文、またはテキスト)を読み、
 政治・経済・芸能・スポーツ・音楽のうち最も当てはまるカテゴリを1つ選び、一言要約を付けてください。
 
 出力ルール:
 - カテゴリは 政治・経済・芸能・スポーツ・音楽 のいずれか1つのみ
-- 要約は30文字以内
+- 要約は{summary_length}文字以内
 - 出力は必ず次のJSON形式のみで返すこと。他の文章は一切含めないこと。
 
-{"category": "カテゴリ名", "summary": "一言要約"}
+{{"category": "カテゴリ名", "summary": "一言要約"}}
 """
 
 
@@ -64,13 +70,15 @@ def _extract_json(text_blocks: list) -> dict:
     return json.loads(combined[start : end + 1])
 
 
-def collect_via_search(category: str) -> list[dict]:
+def collect_via_search(
+    category: str, summary_length: int = DEFAULT_SUMMARY_LENGTH
+) -> list[dict]:
     """Web検索で話題を収集する(自動・無料)"""
     client = anthropic.Anthropic()
     response = client.messages.create(
         model="claude-opus-4-8",
         max_tokens=4096,
-        system=SEARCH_SYSTEM_PROMPT,
+        system=_build_search_system_prompt(summary_length),
         tools=[{"type": "web_search_20260209", "name": "web_search"}],
         messages=[{"role": "user", "content": f"カテゴリ: {category}"}],
     )
@@ -78,10 +86,16 @@ def collect_via_search(category: str) -> list[dict]:
     if not text_blocks:
         raise RuntimeError("Claudeから本文テキストの応答がありませんでした")
     result = _extract_json(text_blocks)
-    return result.get("topics", [])
+    topics = result.get("topics", [])
+    for topic in topics:
+        if "summary" in topic:
+            topic["summary"] = apply_hakata_dict(topic["summary"])
+    return topics
 
 
-def classify_and_summarize(item: str) -> dict:
+def classify_and_summarize(
+    item: str, summary_length: int = DEFAULT_SUMMARY_LENGTH
+) -> dict:
     """貼り付けられたURL/テキストをカテゴリ分類+要約する(手動モード用)"""
     if item.startswith("http://") or item.startswith("https://"):
         content = fetch_article(item)
@@ -94,7 +108,7 @@ def classify_and_summarize(item: str) -> dict:
     response = client.messages.create(
         model="claude-opus-4-8",
         max_tokens=1024,
-        system=CLASSIFY_SYSTEM_PROMPT,
+        system=_build_classify_system_prompt(summary_length),
         messages=[{"role": "user", "content": content}],
     )
     text_blocks = [block.text for block in response.content if block.type == "text"]
@@ -103,6 +117,8 @@ def classify_and_summarize(item: str) -> dict:
     result = _extract_json(text_blocks)
     if source:
         result["url"] = source
+    if "summary" in result:
+        result["summary"] = apply_hakata_dict(result["summary"])
     return result
 
 
@@ -113,7 +129,7 @@ def collect_via_x_api(category: str) -> list[dict]:
     )
 
 
-def collect_manual() -> dict[str, list[dict]]:
+def collect_manual(summary_length: int = DEFAULT_SUMMARY_LENGTH) -> dict[str, list[dict]]:
     """標準入力からURL/テキストを1件ずつ受け取り、カテゴリ分類する"""
     print("気になった投稿のURL、またはテキストを1行ずつ入力してください。")
     print("入力し終わったら、何も入力せずEnterを押してください。\n")
@@ -124,7 +140,7 @@ def collect_manual() -> dict[str, list[dict]]:
         if not item:
             break
         try:
-            classified = classify_and_summarize(item)
+            classified = classify_and_summarize(item, summary_length=summary_length)
         except Exception as e:
             print(f"  [エラー] 分類できませんでした: {e}")
             continue
@@ -171,15 +187,23 @@ def main() -> None:
         required=True,
         help="search: Web検索で自動収集 / manual: 気になった投稿を貼り付けて分類",
     )
+    parser.add_argument(
+        "--summary-length",
+        type=int,
+        default=DEFAULT_SUMMARY_LENGTH,
+        help=f"まとめる文字数(デフォルト: {DEFAULT_SUMMARY_LENGTH})",
+    )
     args = parser.parse_args()
 
     if args.mode == "search":
         category_results: dict[str, list[dict]] = {}
         for category in CATEGORY_LIST:
             print(f"[{category}] を調査中...")
-            category_results[category] = collect_via_search(category)
+            category_results[category] = collect_via_search(
+                category, summary_length=args.summary_length
+            )
     else:
-        category_results = collect_manual()
+        category_results = collect_manual(summary_length=args.summary_length)
 
     report = format_report(category_results)
     print("\n" + report)

@@ -60,6 +60,14 @@ class FactCheckTab(ttk.Frame):
         self.input_box = tk.Text(self, height=5)
         self.input_box.pack(fill="x", padx=10, pady=5)
 
+        length_frame = ttk.Frame(self)
+        length_frame.pack(fill="x", padx=10, pady=(0, 5))
+        ttk.Label(length_frame, text="まとめる文字数:").pack(side="left")
+        self.summary_length_var = tk.StringVar(value=str(factcheck.DEFAULT_SUMMARY_LENGTH))
+        ttk.Spinbox(
+            length_frame, from_=1, to=200, width=5, textvariable=self.summary_length_var
+        ).pack(side="left", padx=(5, 0))
+
         self.run_button = ttk.Button(
             self, text="チェック開始", command=self.on_run
         )
@@ -89,21 +97,31 @@ class FactCheckTab(ttk.Frame):
             self.status_label.config(text="文章かURLを入力してください")
             return
 
+        try:
+            summary_length = int(self.summary_length_var.get())
+            if summary_length <= 0:
+                raise ValueError
+        except ValueError:
+            self.status_label.config(text="まとめる文字数には1以上の整数を入力してください")
+            return
+
         self.run_button.config(state="disabled")
         self.status_label.config(text="チェック中です。少々お待ちください...")
         self.set_result("")
 
-        thread = threading.Thread(target=self._worker, args=(raw_input,), daemon=True)
+        thread = threading.Thread(
+            target=self._worker, args=(raw_input, summary_length), daemon=True
+        )
         thread.start()
 
-    def _worker(self, raw_input: str) -> None:
+    def _worker(self, raw_input: str, summary_length: int) -> None:
         try:
             if raw_input.startswith("http://") or raw_input.startswith("https://"):
                 text = factcheck.fetch_article(raw_input)
             else:
                 text = raw_input
 
-            result = factcheck.check_facts(text)
+            result = factcheck.check_facts(text, summary_length=summary_length)
             output_text = factcheck.format_for_x(result)
             saved_path = factcheck.save_output(output_text)
             display_text = f"{output_text}\n\n[保存先] {saved_path}"
@@ -155,6 +173,14 @@ class TrendWatchTab(ttk.Frame):
         self.input_box = tk.Text(self, height=6)
         self.input_box.pack(fill="x", padx=10, pady=5)
 
+        length_frame = ttk.Frame(self)
+        length_frame.pack(fill="x", padx=10, pady=(0, 5))
+        ttk.Label(length_frame, text="まとめる文字数:").pack(side="left")
+        self.summary_length_var = tk.StringVar(value=str(trend_watch.DEFAULT_SUMMARY_LENGTH))
+        ttk.Spinbox(
+            length_frame, from_=1, to=200, width=5, textvariable=self.summary_length_var
+        ).pack(side="left", padx=(5, 0))
+
         self.run_button = ttk.Button(
             self, text="実行", command=self.on_run
         )
@@ -198,24 +224,38 @@ class TrendWatchTab(ttk.Frame):
                 self.status_label.config(text="投稿のURLかテキストを入力してください")
                 return
 
+        try:
+            summary_length = int(self.summary_length_var.get())
+            if summary_length <= 0:
+                raise ValueError
+        except ValueError:
+            self.status_label.config(text="まとめる文字数には1以上の整数を入力してください")
+            return
+
         self.run_button.config(state="disabled")
         self.status_label.config(text="収集中です。少々お待ちください...")
         self.set_result("")
 
-        thread = threading.Thread(target=self._worker, args=(mode, items), daemon=True)
+        thread = threading.Thread(
+            target=self._worker, args=(mode, items, summary_length), daemon=True
+        )
         thread.start()
 
-    def _worker(self, mode: str, items: list) -> None:
+    def _worker(self, mode: str, items: list, summary_length: int) -> None:
         try:
             if mode == "search":
                 category_results = {}
                 for category in trend_watch.CATEGORY_LIST:
                     self.after(0, self.status_label.config, {"text": f"[{category}] を調査中..."})
-                    category_results[category] = trend_watch.collect_via_search(category)
+                    category_results[category] = trend_watch.collect_via_search(
+                        category, summary_length=summary_length
+                    )
             else:
                 category_results = {c: [] for c in trend_watch.CATEGORY_LIST}
                 for item in items:
-                    classified = trend_watch.classify_and_summarize(item)
+                    classified = trend_watch.classify_and_summarize(
+                        item, summary_length=summary_length
+                    )
                     category = classified.get("category")
                     if category in category_results:
                         category_results[category].append(classified)

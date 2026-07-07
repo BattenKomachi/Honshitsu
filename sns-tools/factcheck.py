@@ -1,6 +1,7 @@
 """ファクトチェック博多弁ツール(CLI版)"""
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -16,18 +17,44 @@ if sys.stdout is not None and sys.stdout.encoding != "utf-8":
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "outputs" / "factcheck"
+HAKATA_DICT_PATH = SCRIPT_DIR / "hakata_dict.csv"
 
 load_dotenv(SCRIPT_DIR / ".env")
 
-SYSTEM_PROMPT = """あなたはファクトチェックの専門家です。ユーザーから渡された文章について、Web検索ツールを使ってネット上の情報を調べ、事実関係を検証してください。
+DEFAULT_SUMMARY_LENGTH = 30
+
+
+def _load_hakata_dict() -> list[tuple[str, str]]:
+    """hakata_dict.csv(変換前,変換後)を読み込む。ファイルはユーザーがExcel等で編集できる。"""
+    if not HAKATA_DICT_PATH.exists():
+        return []
+    pairs = []
+    with HAKATA_DICT_PATH.open(encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 2 and row[0].strip():
+                pairs.append((row[0].strip(), row[1].strip()))
+    return pairs
+
+
+def apply_hakata_dict(text: str) -> str:
+    """対比表(hakata_dict.csv)に沿って、より自然な博多弁の言い回しに変換する"""
+    for before, after in _load_hakata_dict():
+        text = text.replace(before, after)
+    return text
+
+
+def _build_system_prompt(summary_length: int) -> str:
+    return f"""あなたはファクトチェックの専門家です。ユーザーから渡された文章について、Web検索ツールを使ってネット上の情報を調べ、事実関係を検証してください。
 
 出力ルール:
 - 判定(事実/デマ/不明など)は下さないこと。「実際はこうだった」という事実の提示に徹すること。
-- 検証結果を30文字以内の博多弁でまとめること(例: 「そぎゃん話、実際はこうやったばい」のような言い回し)。
+- 検証結果を{summary_length}文字以内の博多弁でまとめること(例: 「そぎゃん話、実際はこうやったばい」のような言い回し)。
 - 根拠にした情報源のURLをすべて列挙すること。
 - 出力は必ず次のJSON形式のみで返すこと。他の文章は一切含めないこと。
 
-{"summary": "30文字以内の博多弁要約", "sources": ["url1", "url2"]}
+{{"summary": "{summary_length}文字以内の博多弁要約", "sources": ["url1", "url2"]}}
 """
 
 
@@ -41,12 +68,12 @@ def fetch_article(url: str) -> str:
     return text
 
 
-def check_facts(text: str) -> dict:
+def check_facts(text: str, summary_length: int = DEFAULT_SUMMARY_LENGTH) -> dict:
     client = anthropic.Anthropic()
     response = client.messages.create(
         model="claude-opus-4-8",
         max_tokens=4096,
-        system=SYSTEM_PROMPT,
+        system=_build_system_prompt(summary_length),
         tools=[{"type": "web_search_20260209", "name": "web_search"}],
         messages=[{"role": "user", "content": text}],
     )
@@ -61,7 +88,10 @@ def check_facts(text: str) -> dict:
     if start == -1 or end == -1 or end < start:
         raise RuntimeError(f"Claudeの応答からJSONを取り出せませんでした:\n{combined}")
 
-    return json.loads(combined[start : end + 1])
+    result = json.loads(combined[start : end + 1])
+    if "summary" in result:
+        result["summary"] = apply_hakata_dict(result["summary"])
+    return result
 
 
 def format_for_x(result: dict) -> str:
@@ -86,6 +116,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ファクトチェック博多弁ツール")
     parser.add_argument("text", nargs="?", help="検証したい文章")
     parser.add_argument("--url", help="検証したいニュース記事などのURL")
+    parser.add_argument(
+        "--summary-length",
+        type=int,
+        default=DEFAULT_SUMMARY_LENGTH,
+        help=f"まとめる文字数(デフォルト: {DEFAULT_SUMMARY_LENGTH})",
+    )
     args = parser.parse_args()
 
     if not args.text and not args.url:
@@ -93,7 +129,7 @@ def main() -> None:
 
     input_text = fetch_article(args.url) if args.url else args.text
 
-    result = check_facts(input_text)
+    result = check_facts(input_text, summary_length=args.summary_length)
     output_text = format_for_x(result)
 
     print(output_text)
