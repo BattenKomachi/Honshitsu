@@ -7,6 +7,7 @@ import sys
 PROJECT_ROOT = "C:/Project/Honshitsu"
 DOC_EXTS = {".md", ".csv", ".xlsx", ".xls", ".txt"}
 PROGRAM_EXTS = {".py", ".sh"}
+ROOT_STANDARD_FILES = {"README.md", "LICENSE", "CHANGELOG.md", ".gitignore"}
 
 
 def main() -> None:
@@ -21,6 +22,9 @@ def main() -> None:
         return
 
     base = os.path.basename(normalized)
+    if base in ROOT_STANDARD_FILES:
+        return
+
     ext = os.path.splitext(base)[1].lower()
 
     if ext in DOC_EXTS:
