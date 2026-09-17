@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Project/Honshitsu/.claude/hooks/ask_file_location.py\"",
+            "shell": "bash"
+          }
+        ]
+      }
+    ]
+  }
+}

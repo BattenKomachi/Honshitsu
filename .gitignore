@@ -1,6 +1,6 @@
 .env
-sns-tools/outputs/
-sns-tools/venv/
+scripts/sns-tools/outputs/
+scripts/sns-tools/venv/
 __pycache__/
 _trash/
 logs/
